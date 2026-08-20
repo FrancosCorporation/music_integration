@@ -1,0 +1,155 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 31,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "78",
+        0
+      ],
+      "positive": [
+        "94",
+        0
+      ],
+      "negative": [
+        "47",
+        0
+      ],
+      "latent_image": [
+        "98",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "18": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "106",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decodificar Áudio"
+    }
+  },
+  "47": {
+    "inputs": {
+      "conditioning": [
+        "94",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "CondicionamentoZerar"
+    }
+  },
+  "78": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "104",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "94": {
+    "inputs": {
+      "tags": "Brazilian Sertanejo: A heartfelt and cinematic modern sertanejo track that blends traditional country roots with contemporary production. The arrangement flows naturally between sections—a storytelling verse carried by warm acoustic guitars and emotional vocals, a softer pre-chorus featuring gentle harmonies, subtle piano, and rising anticipation, followed by a powerful and memorable chorus driven by rich acoustic instrumentation, soaring melodies, and a sing-along hook. The production balances rustic authenticity with polished modern sound, featuring violão, accordion accents, steel guitar textures, deep bass, and dynamic percussion. The atmosphere is emotional, nostalgic, and passionate, capturing themes of love, longing, heartbreak, and countryside life while maintaining the energy and commercial appeal of today's biggest sertanejo hits.",
+      "lyrics": "[Intro - Violão & Sanfona]\n\nyeah...\nôôô...\nmais uma noite...\n\n[Verso 1]\n\nPoeira na bota, o sol se escondendo\nNaquela estrada que eu sigo vivendo\nLuzes da cidade lá no interior\nE o teu sorriso ainda tem meu amor\n\nA caminhonete cortando o sertão\nE o teu nome preso no meu coração\nCada quilômetro me faz lembrar\nDas promessas que ficaram no ar\n\n[Verso 2]\n\nA lua reflete no vidro embaçado\nPensando em tudo que ficou no passado\nTeu perfume ainda mora aqui\nComo se nunca tivesse saído de mim\n\nO rádio toca a nossa canção\nE eu volto no tempo sem pedir perdão\nTe vejo dançando sob o luar\nAntes da vida nos separar\n\n[Pré-Refrão]\n\nE toda estrada me leva pra você\nToda saudade me faz reviver\nOs momentos que o tempo levou\nMas que o meu peito nunca esqueceu\n\nO vento chama teu nome outra vez\nE eu não sei fingir lucidez\nMais uma curva, mais uma oração\nPra encontrar você na direção\n\n[Refrão]\n\nÔôô...\nDebaixo desse céu estrelado\nVocê ainda mora do meu lado\nEm cada esquina, em cada lugar\nTem um pedaço do nosso amar\n\nÔôô...\nSe o destino ainda acreditar\nTalvez a vida deixe recomeçar\nSe você também pensa em mim\nQuem sabe nossa história não teve fim\n\n[Pós-Refrão]\n\nHey!\n\nÔôô...\nQuem sabe nossa história não teve fim\n\nÔôô...\nTalvez o amor só esteja esperando por nós\n\n[Ponte]\n\nOs anos passaram, eu continuo aqui\nGuardando tudo que restou de ti\nTem amor que acaba sem avisar\nE tem amor que se recusa a passar\n\nSe você ouvir esse violão tocar\nSaiba que ainda tento te encontrar\nExiste um lugar além da despedida\nOnde nosso amor continua vivo na vida\n\n[Refrão Final]\n\nÔôô...\nDebaixo desse céu estrelado\nVocê ainda mora do meu lado\nEm cada esquina, em cada lugar\nTem um pedaço do nosso amar\n\nÔôô...\nSe o destino ainda acreditar\nTalvez a vida deixe recomeçar\nSe você também pensa em mim\nQuem sabe nossa história não teve fim\n\n[Outro]\n\nPoeira na bota...\nTeu nome no coração...\n\nE toda estrada...\nAinda me leva na tua direção...\n",
+      "seed": 31,
+      "bpm": 190,
+      "duration": 120,
+      "timesignature": "4",
+      "language": "pt",
+      "keyscale": "E minor",
+      "generate_audio_codes": true,
+      "cfg_scale": 2,
+      "temperature": 0.85,
+      "top_p": 0.9,
+      "top_k": 0,
+      "min_p": 0,
+      "clip": [
+        "105",
+        0
+      ]
+    },
+    "class_type": "TextEncodeAceStepAudio1.5",
+    "_meta": {
+      "title": "TextEncodeAceStepAudio1.5"
+    }
+  },
+  "98": {
+    "inputs": {
+      "seconds": 120,
+      "batch_size": 1
+    },
+    "class_type": "EmptyAceStep1.5LatentAudio",
+    "_meta": {
+      "title": "Empty Ace Step 1.5 Latent Audio"
+    }
+  },
+  "104": {
+    "inputs": {
+      "unet_name": "acestep_v1.5_turbo.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Carregar Modelo de Difusão"
+    }
+  },
+  "105": {
+    "inputs": {
+      "clip_name1": "qwen_0.6b_ace15.safetensors",
+      "clip_name2": "qwen_1.7b_ace15.safetensors",
+      "type": "ace",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "Carregador DualCLIP"
+    }
+  },
+  "106": {
+    "inputs": {
+      "vae_name": "ace_1.5_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Carregar VAE"
+    }
+  },
+  "107": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Salvar Áudio (MP3)"
+    }
+  }
+}

@@ -1,3 +1,22 @@
+# Music Integration (Streamlit)
+
+## 🐳 Instalação e Execução (Docker) — recomendado
+
+### Pré-requisitos
+- [Docker](https://docs.docker.com/get-docker/) + Docker Compose
+
+### Rodar com Docker
+```bash
+docker compose up --build
+```
+Já possui Dockerfile com Playwright. `docker build -t music-int . && docker run -p 8501:8501 music-int`
+
+### Sem Docker (local)
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
 2. A Arquitetura do Novo Projeto em Python
 Para atender aos seus requisitos de ter uma dashboard simples para monitoramento e gerenciar logins diretamente pelo navegador, podemos estruturar o projeto com as seguintes tecnologias:
 

@@ -1,161 +1,239 @@
-# app.py - Streamlit dashboard
-import streamlit as st
-import sqlite3
-import pandas as pd
-from pathlib import Path
-import sys
+"""Authenticated Streamlit dashboard for an explicit YouTube publishing queue."""
+
 import asyncio
+import hmac
+import os
+from pathlib import Path
+import sqlite3
+import uuid
 
-# add modules path
-sys.path.append(str(Path(__file__).parent))
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
 
-from modules.youtube import YouTubePlatform
-from modules.instagram import InstagramPlatform
-from modules.tiktok import TikTokPlatform
-from modules.pinterest import PinterestPlatform
-from modules.x_twitter import XTwitterPlatform
-from modules.linkedin import LinkedInPlatform
+load_dotenv(Path(__file__).parents[1] / ".env")
+
 import database as db
+from modules.base import VideoMeta
+from modules.youtube import YouTubePlatform
 
-st.set_page_config(page_title="Francos Corp - Social Automation", layout="wide")
 
-# Initialize DB
-db.init_db()
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_BATCH_BYTES = 200 * 1024 * 1024
+ALLOWED_SUFFIXES = {".mp4", ".mov", ".mkv"}
+SESSION_DIR = Path(os.environ.get("SESSION_DIR", Path(__file__).parents[1] / "sessions")).expanduser().resolve()
+PLATFORMS = {"YouTube": "youtube"}
 
-# Helper to run async functions
-def run_async(coro):
-    return asyncio.run(coro)
 
-# Load platforms
-SESSION_DIR = Path(__file__).parent / "sessions"
-PLATFORMS = {
-    "YouTube": YouTubePlatform(SESSION_DIR),
-    "Instagram": InstagramPlatform(SESSION_DIR),
-    "TikTok": TikTokPlatform(SESSION_DIR),
-    "Pinterest": PinterestPlatform(SESSION_DIR),
-    "X (Twitter)": XTwitterPlatform(SESSION_DIR),
-    "LinkedIn": LinkedInPlatform(SESSION_DIR),
-}
+def require_dashboard_password() -> None:
+    configured_password = os.environ.get("DASHBOARD_PASSWORD", "")
+    if len(configured_password) < 16:
+        st.error("Configure uma DASHBOARD_PASSWORD com pelo menos 16 caracteres antes de iniciar o painel.")
+        st.stop()
 
-def get_conn():
-    return sqlite3.connect(db.DB_PATH)
+    if st.session_state.get("authenticated"):
+        return
 
-def load_videos():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM videos ORDER BY created_at DESC", conn)
-    conn.close()
-    return df
+    st.title("Acesso ao painel")
+    with st.form("login"):
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar", use_container_width=True)
+    if submitted:
+        if hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8")):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        st.error("Senha inválida.")
+    st.stop()
 
-def load_logs():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM logs ORDER BY created_at DESC LIMIT 200", conn)
-    conn.close()
-    return df
 
-def load_accounts():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM accounts", conn)
-    conn.close()
-    return df
+def save_upload(uploaded_file) -> Path:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix not in ALLOWED_SUFFIXES:
+        raise ValueError("Formato não suportado. Use MP4, MOV ou MKV.")
+    if not uploaded_file.size or uploaded_file.size > MAX_UPLOAD_BYTES:
+        raise ValueError("O vídeo precisa ter entre 1 byte e 200 MB.")
+    data = uploaded_file.getvalue()
+    if not data or len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError("O arquivo está vazio ou ultrapassa o limite de 200 MB.")
+    if suffix in {".mp4", ".mov"} and data[4:8] != b"ftyp":
+        raise ValueError("O conteúdo do arquivo não corresponde a um vídeo MP4 ou MOV.")
+    if suffix == ".mkv" and not data.startswith(b"\x1a\x45\xdf\xa3"):
+        raise ValueError("O conteúdo do arquivo não corresponde a um vídeo Matroska.")
 
-st.title("🎬 Francos Corp – Social Automation Dashboard")
+    assets_dir = db.DATA_DIR / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(assets_dir, 0o700)
+    except OSError:
+        pass
+    destination = assets_dir / f"{uuid.uuid4().hex}{suffix}"
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(data)
+    return destination
 
-tabs = st.tabs(["🏠 Home", "🔐 Logins", "📤 Queue", "📜 Logs"])
 
-# ---- Home ----
-with tabs[0]:
-    st.subheader("Status Geral")
-    videos = load_videos()
-    total = len(videos)
-    posted = len(videos[videos["status"] == "posted"])
-    pending = len(videos[videos["status"] == "pending"])
-    error = len(videos[videos["status"] == "error"])
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
-    c2.metric("Postados", posted)
-    c3.metric("Pendentes", pending)
-    c4.metric("Erros", error)
-
-    st.subheader("Conexões")
-    accounts = load_accounts()
-    if not accounts.empty:
-        for _, row in accounts.iterrows():
-            status = "🟢 Conectado" if row["connected"] else "🔴 Desconectado"
-            st.write(f"{row['platform']}: {status}")
-    else:
-        st.info("Nenhuma conta registrada ainda.")
-
-# ---- Logins ----
-with tabs[1]:
-    st.subheader("Gerenciar Logins")
-    for name, platform in PLATFORMS.items():
-        col1, col2 = st.columns([3,1])
-        connected = platform.is_logged_in()
-        col1.write(f"**{name}** – {'✅ Conectado' if connected else '❌ Desconectado'}")
-        if col2.button(f"{'Desconectar' if connected else 'Conectar'} {name}", key=f"conn_{name}"):
-            if connected:
-                # logout: clear session file
-                session_file = Path(__file__).parent / "sessions" / platform.platform_name / "session.json"
-                if session_file.exists():
-                    session_file.unlink()
-                st.success(f"{name} desconectado.")
-            else:
-                with st.spinner(f"Abrindo navegador para login em {name}..."):
-                    try:
-                        run_async(platform.login_interactive())
-                        st.success(f"{name} conectado!")
-                    except Exception as e:
-                        st.error(f"Erro ao conectar {name}: {e}")
-
-# ---- Queue ----
-with tabs[2]:
-    st.subheader("Fila de Publicação")
-    uploaded = st.file_uploader("Selecione vídeo(s)", type=["mp4","mov","mkv"], accept_multiple_files=True)
-    title = st.text_input("Título")
-    description = st.text_area("Descrição")
-    tags = st.text_input("Tags (separadas por vírgula)")
-    platforms_sel = st.multiselect("Plataformas", list(PLATFORMS.keys()), default=["YouTube","Instagram","TikTok"])
-    if st.button("Adicionar à fila") and uploaded:
-        conn = get_conn()
-        cur = conn.cursor()
-        for f in uploaded:
-            path = Path("assets") / f.name
-            path.parent.mkdir(exist_ok=True)
-            with open(path, "wb") as out:
-                out.write(f.getbuffer())
-            cur.execute(
-                "INSERT INTO videos (file_path,title,description,tags) VALUES (?,?,?,?)",
-                (str(path), title, description, tags)
+def publish_pending(platform: YouTubePlatform, privacy: str) -> tuple[int, int]:
+    posted = 0
+    failed = 0
+    for target in db.list_pending_targets():
+        if target["platform"] != "youtube":
+            db.finish_target(target["target_id"], "error", "Integração indisponível nesta versão.")
+            failed += 1
+            continue
+        if not db.claim_target(target["target_id"]):
+            continue
+        try:
+            tags = [tag.strip() for tag in target["tags"].split(",") if tag.strip()]
+            file_path = Path(target["file_path"]).expanduser().resolve()
+            asset_root = (db.DATA_DIR / "assets").resolve()
+            if not file_path.is_relative_to(asset_root):
+                raise ValueError("O caminho do vídeo não pertence ao armazenamento da fila.")
+            result = asyncio.run(
+                platform.post_video(
+                    VideoMeta(
+                        file_path=file_path,
+                        title=target["title"],
+                        description=target["description"],
+                        tags=tags,
+                    ),
+                    privacy=privacy,
+                )
             )
-        conn.commit()
-        conn.close()
-        st.success(f"{len(uploaded)} vídeo(s) adicionados à fila.")
+            remote_id = result.get("video_id")
+            db.finish_target(
+                target["target_id"],
+                "posted",
+                f"Publicado no YouTube. ID: {remote_id}" if remote_id else "Publicado no YouTube.",
+                remote_id=remote_id,
+            )
+            posted += 1
+        except Exception as exc:
+            # Provider details can contain private request data; keep only the error type.
+            message = f"Falha no upload ({type(exc).__name__})."
+            db.finish_target(target["target_id"], "error", message)
+            failed += 1
+    return posted, failed
+
+
+st.set_page_config(page_title="Francos Corp — Publicação de vídeos", page_icon="🎬", layout="wide")
+require_dashboard_password()
+db.init_db()
+youtube = YouTubePlatform(SESSION_DIR)
+
+with st.sidebar:
+    st.markdown("### Francos Corp")
+    st.caption("Painel privado de publicação de vídeos")
+    st.write("YouTube: " + ("🟢 conectado" if youtube.is_logged_in() else "🔴 sem credencial válida"))
+    if st.button("Sair", use_container_width=True):
+        st.session_state.pop("authenticated", None)
         st.rerun()
 
-    st.markdown("---")
-    st.subheader("Fila atual")
-    df = load_videos()
-    if not df.empty:
-        st.dataframe(df[["id","title","status","created_at"]], use_container_width=True)
-        if st.button("Publicar pendentes"):
-            # simple loop
-            for _, row in df[df["status"]=="pending"].iterrows():
-                for plat_name in platforms_sel:
-                    platform = PLATFORMS[plat_name]
-                    if not platform.is_logged_in():
-                        st.warning(f"{plat_name} não conectado.")
-                        continue
-                    # TODO: async post
-                    st.info(f"Postando {row['title']} no {plat_name} ...")
-            st.success("Processamento iniciado (ver logs).")
-    else:
-        st.info("Nenhum vídeo na fila.")
+st.title("🎬 Publicação de vídeos")
+st.caption("Os uploads só começam quando você aciona Publicar. A privacidade padrão é privada.")
+tabs = st.tabs(["Visão geral", "Fila", "Conta YouTube", "Registros"])
 
-# ---- Logs ----
-with tabs[3]:
-    st.subheader("Logs Recentes")
-    logs = load_logs()
-    if not logs.empty:
-        st.dataframe(logs, use_container_width=True)
+with tabs[0]:
+    stats = db.get_stats()
+    columns = st.columns(5)
+    for column, label, key in zip(
+        columns,
+        ("Vídeos", "Publicados", "Pendentes", "Em andamento", "Com falha"),
+        ("total", "posted", "pending", "processing", "error"),
+    ):
+        column.metric(label, stats[key])
+    if stats["partial"]:
+        st.info(f"{stats['partial']} vídeo(s) têm destinos publicados e destinos com falha.")
+    st.markdown("#### Integrações disponíveis")
+    st.success("YouTube — API oficial do Google")
+    st.info("Instagram, TikTok, Pinterest, X e LinkedIn ainda não estão disponíveis para publicação.")
+
+with tabs[1]:
+    st.subheader("Adicionar à fila")
+    with st.form("queue_upload", clear_on_submit=True):
+        uploaded_files = st.file_uploader(
+            "Selecione vídeos (MP4, MOV ou MKV; até 200 MB por envio)",
+            type=["mp4", "mov", "mkv"],
+            accept_multiple_files=True,
+        )
+        title = st.text_input("Título", max_chars=100)
+        description = st.text_area("Descrição", max_chars=5000)
+        tags_text = st.text_input("Tags separadas por vírgula")
+        submitted = st.form_submit_button("Adicionar à fila", type="primary")
+    if submitted:
+        if not uploaded_files:
+            st.error("Selecione ao menos um vídeo.")
+        elif sum(uploaded_file.size for uploaded_file in uploaded_files) > MAX_BATCH_BYTES:
+            st.error("O tamanho total dos vídeos deste envio ultrapassa 200 MB.")
+        else:
+            queued = 0
+            for uploaded_file in uploaded_files:
+                saved_path = None
+                try:
+                    saved_path = save_upload(uploaded_file)
+                    clean_title = title.strip() or Path(uploaded_file.name).stem[:100] or "Vídeo"
+                    tags = [tag.strip()[:500] for tag in tags_text.split(",") if tag.strip()][:500]
+                    db.enqueue_video(saved_path, clean_title, description, tags, ["youtube"])
+                    queued += 1
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    if saved_path is not None:
+                        saved_path.unlink(missing_ok=True)
+                    st.error(f"{uploaded_file.name}: {exc}")
+            if queued:
+                st.success(f"{queued} vídeo(s) adicionado(s) à fila do YouTube.")
+
+    st.divider()
+    st.subheader("Publicação manual")
+    privacy = st.selectbox(
+        "Privacidade no YouTube",
+        options=["private", "unlisted", "public"],
+        format_func={"private": "Privado", "unlisted": "Não listado", "public": "Público"}.get,
+        help="Vídeos públicos ficam visíveis para qualquer pessoa. A opção padrão é Privado.",
+    )
+    public_confirmed = True
+    if privacy == "public":
+        public_confirmed = st.checkbox("Confirmo que estes vídeos serão publicados publicamente.")
+    if st.button("Publicar vídeos pendentes", type="primary", disabled=(privacy == "public" and not public_confirmed)):
+        if not youtube.is_logged_in():
+            st.error("Conecte uma conta do YouTube na aba Conta YouTube antes de publicar.")
+        else:
+            with st.spinner("Enviando vídeos para o YouTube…"):
+                posted, failed = publish_pending(youtube, privacy)
+            st.success(f"Publicados: {posted} · Com falha: {failed}")
+    if st.button("Recolocar falhas na fila"):
+        retried = db.retry_failed_targets()
+        st.info(f"{retried} destino(s) aguardando nova tentativa.")
+
+    rows = db.list_queue()
+    if rows:
+        frame = pd.DataFrame(rows)
+        display_columns = ["id", "title", "status", "platform", "target_status", "message", "created_at"]
+        st.dataframe(frame[display_columns], use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhum log ainda.")
+        st.info("A fila está vazia.")
+
+with tabs[2]:
+    st.subheader("Conta YouTube")
+    if youtube.is_logged_in():
+        st.success("Credencial OAuth disponível.")
+        st.write("Token: " + str(youtube.token_file))
+    else:
+        st.warning("Nenhuma credencial válida foi encontrada.")
+    st.markdown(
+        "Para conectar, configure um OAuth Client ID de aplicativo para computador no Google Cloud "
+        "e execute `python -m social_automation.youtube_auth` no computador que tem acesso ao navegador. "
+        "O painel nunca recebe nem armazena a senha da conta Google."
+    )
+    if st.button("Desconectar YouTube"):
+        if youtube.token_file.exists():
+            youtube.token_file.unlink()
+        st.success("Token removido.")
+        st.rerun()
+
+with tabs[3]:
+    st.subheader("Registros recentes")
+    logs = db.list_logs()
+    if logs:
+        st.dataframe(pd.DataFrame(logs), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum registro ainda.")

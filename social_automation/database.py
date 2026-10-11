@@ -1,63 +1,258 @@
-# database.py
-import sqlite3
+"""SQLite persistence for queued videos and per-platform publishing results."""
+
+from contextlib import contextmanager
 import os
 from pathlib import Path
-from contextlib import contextmanager
+import sqlite3
 
-DB_PATH = Path(__file__).parent / "data.db"
 
-def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parents[1] / "data")).expanduser().resolve()
+DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "data.db")).expanduser().resolve()
+
+
+def get_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    connection = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 10000")
+    try:
+        os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
+    return connection
+
 
 @contextmanager
 def get_db():
-    conn = get_connection()
+    connection = get_connection()
     try:
-        yield conn
-        conn.commit()
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
-        conn.close()
+        connection.close()
 
-def init_db():
-    with get_db() as conn:
-        cur = conn.cursor()
-        # videos queue
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS videos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT NOT NULL,
-            title TEXT,
-            description TEXT,
-            tags TEXT,          -- comma separated
-            status TEXT DEFAULT 'pending',  -- pending, posted, error
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            posted_at TIMESTAMP
-        );
-        """)
-        # logs
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            video_id INTEGER,
-            platform TEXT,
-            status TEXT,
-            message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(video_id) REFERENCES videos(id)
-        );
-        """)
-        # accounts status
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            platform TEXT PRIMARY KEY,
-            connected BOOLEAN DEFAULT 0,
-            session_data TEXT,  -- JSON of cookies/tokens
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """)
-    print("Database initialized at", DB_PATH)
 
-if __name__ == "__main__":
-    init_db()
+def init_db() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(DATA_DIR, 0o700)
+    except OSError:
+        pass
+    with get_db() as connection:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS videos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                posted_at TIMESTAMP
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS video_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                platform TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'processing', 'posted', 'error')),
+                remote_id TEXT,
+                message TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                posted_at TIMESTAMP,
+                UNIQUE(video_id, platform)
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id INTEGER REFERENCES videos(id) ON DELETE SET NULL,
+                platform TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS accounts (
+                platform TEXT PRIMARY KEY,
+                connected BOOLEAN NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_targets_status ON video_targets(status, created_at)"
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC)")
+
+
+def enqueue_video(
+    file_path: Path,
+    title: str,
+    description: str,
+    tags: list[str],
+    platforms: list[str],
+) -> int:
+    normalized_platforms = list(dict.fromkeys(platforms))
+    if not normalized_platforms:
+        raise ValueError("Selecione pelo menos uma plataforma disponível.")
+    with get_db() as connection:
+        cursor = connection.execute(
+            "INSERT INTO videos (file_path, title, description, tags) VALUES (?, ?, ?, ?)",
+            (str(Path(file_path).resolve()), title.strip(), description.strip(), ",".join(tags)),
+        )
+        video_id = int(cursor.lastrowid)
+        connection.executemany(
+            "INSERT INTO video_targets (video_id, platform) VALUES (?, ?)",
+            [(video_id, platform) for platform in normalized_platforms],
+        )
+        connection.executemany(
+            "INSERT INTO logs (video_id, platform, status, message) VALUES (?, ?, ?, ?)",
+            [(video_id, platform, "pending", "Adicionado à fila.") for platform in normalized_platforms],
+        )
+    return video_id
+
+
+def list_queue(limit: int = 500) -> list[dict]:
+    with get_db() as connection:
+        rows = connection.execute(
+            """SELECT v.id, v.title, v.status, v.created_at, v.file_path,
+                      t.id AS target_id, t.platform, t.status AS target_status,
+                      t.remote_id, t.message, t.posted_at
+               FROM videos AS v
+               LEFT JOIN video_targets AS t ON t.video_id = v.id
+               ORDER BY v.created_at DESC, t.id ASC
+               LIMIT ?""",
+            (max(1, min(limit, 2000)),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_pending_targets(limit: int = 100) -> list[dict]:
+    with get_db() as connection:
+        rows = connection.execute(
+            """SELECT t.id AS target_id, t.video_id, t.platform,
+                      v.file_path, v.title, v.description, v.tags
+               FROM video_targets AS t
+               JOIN videos AS v ON v.id = t.video_id
+               WHERE t.status = 'pending'
+               ORDER BY t.created_at ASC, t.id ASC
+               LIMIT ?""",
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def claim_target(target_id: int) -> bool:
+    with get_db() as connection:
+        cursor = connection.execute(
+            """UPDATE video_targets
+               SET status = 'processing', message = 'Upload em andamento.',
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = 'pending'""",
+            (target_id,),
+        )
+        if cursor.rowcount != 1:
+            return False
+        row = connection.execute(
+            "SELECT video_id, platform FROM video_targets WHERE id = ?", (target_id,)
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO logs (video_id, platform, status, message) VALUES (?, ?, ?, ?)",
+            (row["video_id"], row["platform"], "processing", "Upload iniciado pelo painel."),
+        )
+        connection.execute(
+            "UPDATE videos SET status = 'processing', posted_at = NULL WHERE id = ?",
+            (row["video_id"],),
+        )
+    return True
+
+
+def finish_target(target_id: int, status: str, message: str, remote_id: str | None = None) -> None:
+    if status not in {"posted", "error"}:
+        raise ValueError("Status final de plataforma inválido.")
+    clean_message = " ".join(str(message).split())[:500]
+    with get_db() as connection:
+        row = connection.execute(
+            "SELECT video_id, platform FROM video_targets WHERE id = ?", (target_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError("Destino da fila não encontrado.")
+        connection.execute(
+            """UPDATE video_targets
+               SET status = ?, remote_id = ?, message = ?, updated_at = CURRENT_TIMESTAMP,
+                   posted_at = CASE WHEN ? = 'posted' THEN CURRENT_TIMESTAMP ELSE NULL END
+               WHERE id = ?""",
+            (status, remote_id, clean_message, status, target_id),
+        )
+        connection.execute(
+            "INSERT INTO logs (video_id, platform, status, message) VALUES (?, ?, ?, ?)",
+            (row["video_id"], row["platform"], status, clean_message),
+        )
+        statuses = [
+            item[0]
+            for item in connection.execute(
+                "SELECT status FROM video_targets WHERE video_id = ?", (row["video_id"],)
+            ).fetchall()
+        ]
+        if statuses and all(item == "posted" for item in statuses):
+            video_status, posted_at = "posted", "CURRENT_TIMESTAMP"
+        elif "pending" in statuses or "processing" in statuses:
+            video_status = "processing" if "processing" in statuses else "pending"
+            posted_at = "NULL"
+        elif "posted" in statuses and "error" in statuses:
+            video_status, posted_at = "partial", "NULL"
+        else:
+            video_status, posted_at = "error", "NULL"
+        connection.execute(
+            f"UPDATE videos SET status = ?, posted_at = {posted_at} WHERE id = ?",
+            (video_status, row["video_id"]),
+        )
+
+
+def retry_failed_targets() -> int:
+    with get_db() as connection:
+        rows = connection.execute(
+            "SELECT video_id, platform FROM video_targets WHERE status = 'error'"
+        ).fetchall()
+        connection.execute(
+            """UPDATE video_targets
+               SET status = 'pending', message = 'Aguardando nova tentativa.',
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE status = 'error'"""
+        )
+        connection.execute(
+            "UPDATE videos SET status = 'pending', posted_at = NULL WHERE status IN ('error', 'partial')"
+        )
+        connection.executemany(
+            "INSERT INTO logs (video_id, platform, status, message) VALUES (?, ?, ?, ?)",
+            [(row["video_id"], row["platform"], "pending", "Falha recolocada na fila manualmente.") for row in rows],
+        )
+    return len(rows)
+
+
+def get_stats() -> dict[str, int]:
+    with get_db() as connection:
+        rows = connection.execute("SELECT status, COUNT(*) AS count FROM videos GROUP BY status").fetchall()
+    result = {"total": 0, "posted": 0, "pending": 0, "processing": 0, "partial": 0, "error": 0}
+    for row in rows:
+        result[row["status"]] = row["count"]
+        result["total"] += row["count"]
+    return result
+
+
+def list_logs(limit: int = 200) -> list[dict]:
+    with get_db() as connection:
+        rows = connection.execute(
+            """SELECT id, video_id, platform, status, message, created_at
+               FROM logs ORDER BY created_at DESC, id DESC LIMIT ?""",
+            (max(1, min(limit, 1000)),),
+        ).fetchall()
+    return [dict(row) for row in rows]

@@ -1,1 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
 venv/
+.env
+.env.*
+!.env.example
+data/
+sessions/
+social_automation/data.db
+social_automation/assets/
+*.sqlite
+*.sqlite3
+*.db-journal
+.streamlit/secrets.toml

@@ -1,150 +1,65 @@
-# Music Integration (Streamlit)
+# Music Integration
 
-## 🐳 Instalação e Execução (Docker) — recomendado
+Painel privado em Streamlit para organizar vídeos e publicá-los manualmente no YouTube pela API oficial do Google. Instagram, TikTok, Pinterest, X e LinkedIn aparecem como integrações futuras e não recebem arquivos nem tentativas de login.
 
-### Pré-requisitos
-- [Docker](https://docs.docker.com/get-docker/) + Docker Compose
+## Requisitos
 
-### Rodar com Docker
+- Python 3.12 ou Docker com Docker Compose.
+- Um OAuth Client ID do tipo **aplicativo para computador** no Google Cloud, com a YouTube Data API v3 habilitada.
+- Uma senha administrativa aleatória com pelo menos 16 caracteres.
+
+## Execução local
+
 ```bash
-docker compose up --build
-```
-Já possui Dockerfile com Playwright. `docker build -t music-int . && docker run -p 8501:8501 music-int`
-
-### Sem Docker (local)
-```bash
+cp .env.example .env
+# Edite .env e defina DASHBOARD_PASSWORD com uma senha longa e exclusiva.
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-streamlit run app.py
+mkdir -p data sessions/youtube
+chmod 700 data sessions sessions/youtube
+streamlit run social_automation/app.py --server.address=127.0.0.1
 ```
 
-2. A Arquitetura do Novo Projeto em Python
-Para atender aos seus requisitos de ter uma dashboard simples para monitoramento e gerenciar logins diretamente pelo navegador, podemos estruturar o projeto com as seguintes tecnologias:
+Abra `http://127.0.0.1:8501` e entre com `DASHBOARD_PASSWORD`.
 
-Backend / Orquestrador: Python + FastAPI. É moderno, incrivelmente rápido e perfeito para lidar com as chamadas das APIs e agendar as postagens.
+## Conectar a conta Google
 
-Dashboard de Monitoramento: Streamlit. É uma biblioteca Python fantástica que cria interfaces web bonitas e funcionais em minutos, sem precisar escrever HTML ou JavaScript. Você poderá abrir o painel para ver o status dos agentes, relatórios de postagens e gerenciar contas.
+1. Baixe o arquivo OAuth do Google Cloud e salve-o como `sessions/youtube/client_secret.json`.
+2. Com o ambiente virtual ativo, execute `python -m social_automation.youtube_auth` no computador que tem um navegador.
+3. Autorize a conta no Google. O token será salvo em `sessions/youtube/token.json` com acesso restrito ao usuário local.
+4. Inicie ou atualize o painel. A credencial é renovada quando necessário.
 
-Autenticação e "Login no Navegador": Playwright (com Python). Para redes sociais que dificultam o uso de APIs puras (como o Instagram e o TikTok em alguns cenários), o Playwright permite que o sistema abra um navegador real, deixe você fazer o login manualmente na primeira vez, e então salve os cookies de sessão para que o robô faça as postagens automaticamente nas próximas vezes.
+O arquivo de cliente OAuth e o token são segredos locais. Não os envie ao Git ou a terceiros.
 
-3. Plano de Ação Completo
-Vamos dividir o desenvolvimento em 4 fases claras para garantir que tudo funcione perfeitamente.
+## Execução com Docker Compose
 
-Fase 1: Configuração da Base e Dashboard
+```bash
+cp .env.example .env
+# Edite .env: configure uma senha longa e PUID/PGID com os IDs do seu usuário.
+mkdir -p data sessions/youtube
+chmod 700 data sessions sessions/youtube
+docker compose up --build -d
+```
 
-Criar o ambiente virtual Python.
+O painel fica disponível somente em `127.0.0.1:8501`. Os dados persistem em `data/` e `sessions/`. Para conectar pelo OAuth, execute o comando de autenticação no host e mantenha o diretório `sessions/` montado. Para parar: `docker compose down`.
 
-Levantar a interface básica com o Streamlit.
+## Uso e limites atuais
 
-Criar a estrutura do banco de dados (pode ser SQLite para facilitar ou PostgreSQL) para salvar o status dos vídeos (pendente, postado, erro).
+- Adicione vídeos MP4, MOV ou MKV. Cada arquivo pode ter até 200 MB, com limite combinado de 200 MB por envio. Cada item recebe um nome aleatório no armazenamento privado local.
+- Informe o título ou deixe em branco para usar o nome do arquivo. Descrição e tags são opcionais.
+- A fila nunca publica sozinha. Clique em **Publicar vídeos pendentes** para enviar.
+- A privacidade padrão é **Privado**. Para vídeos públicos, selecione **Público** e confirme a publicação aberta.
+- O estado e o identificador retornado pela API ficam registrados por vídeo. Falhas podem ser recolocadas manualmente na fila.
+- Vídeos anteriores à fila por plataforma não são publicados automaticamente.
+- Cada execução envia até 100 destinos pendentes. A API e as cotas do Google podem limitar uploads.
+- Não há agendamento, postagem automática, nem integração habilitada para outras redes.
 
-Fase 2: Módulo de Autenticação (O Login no Navegador)
+## Armazenamento e configuração
 
-Integrar o Playwright para gerenciar sessões.
+- `DASHBOARD_PASSWORD`: senha obrigatória do painel (mínimo de 16 caracteres).
+- `DATA_DIR`: diretório de SQLite e vídeos recebidos; padrão `social_automation/data/`.
+- `SESSION_DIR`: diretório de credenciais; padrão `social_automation/sessions/`.
+- `DB_PATH`: opcional, caminho explícito para o SQLite.
 
-Criar na dashboard um botão "Conectar Conta", que abre uma janela de navegador limpa para você colocar login e senha.
-
-Salvar o estado do navegador (cookies/tokens) localmente de forma segura.
-
-Fase 3: Integração das Redes Sociais
-
-YouTube: Usaremos a API oficial do Google (OAuth2). É a forma mais estável.
-
-Instagram & TikTok: Usaremos o método de sessão do Playwright para emular as postagens web ou bibliotecas não-oficiais robustas, já que as APIs oficiais para postagem direta de vídeo às vezes têm restrições chatas para contas não-comerciais.
-
-Sugestões Extras: Recomendo adicionarmos Pinterest (excelente tráfego orgânico para vídeos curtos/ideias) e X (Twitter), que tem uma API bem documentada e aceita bem o reaproveitamento de vídeos curtos.
-
-Fase 4: Agentes e Automação (O "Trabalho" nos Bastidores)
-
-Criar os scripts Python que pegam o vídeo gerado, preparam o título, as hashtags (usando IA para gerar a copy) e enviam para as plataformas configuradas.
-
-Ligar tudo à dashboard para você ver barras de progresso ou logs em tempo real ("Vídeo X postado com sucesso no TikTok").
-
-
-Aqui está o planejamento completo e estruturado para você entregar diretamente para a IA começar a construir o ecossistema em Python. O projeto será focado em automação total, gestão via dashboard em Streamlit e sistema de login persistente via navegador (Playwright) e APIs oficiais.
-
-Planejamento Completo: Sistema de Automação de Mídias Sociais em Python
-1. Escopo das Plataformas de Destino
-Para garantir o máximo de alcance, o sistema fará a distribuição automatizada para todas as principais plataformas de vídeos curtos e longos:
-
-YouTube (Shorts e Vídeos Longos via API oficial do Google OAuth2)
-
-Instagram (Reels via Automação de Sessão/Playwright e API Graph onde aplicável)
-
-TikTok (Vídeos via Playwright/Sessão e API de Upload)
-
-Pinterest (Idea Pins / Vídeos para tráfego orgânico)
-
-X (Twitter) (Postagem de vídeos curtos)
-
-LinkedIn (Vídeos corporativos/profissionais)
-
-2. Stack Tecnológica
-Linguagem: Python 3.10+
-
-Interface / Dashboard: Streamlit (para visualização de status, logs, métricas e botões de controle)
-
-Automação Web / Logins: Playwright (para simular interações de navegador reais, capturar e salvar cookies de sessão de plataformas que dificultam login via API)
-
-APIs Oficiais: Google Client Library (YouTube), Requests / SDKs específicos para as demais.
-
-Banco de Dados Local: SQLite (para gerenciar a fila de vídeos, status de postagem e credenciais/tokens criptografados)
-
-Gerenciador de Tarefas: Background threads ou APScheduler (para rodar os agendamentos em segundo plano)
-
-3. Arquitetura de Pastas Sugerida
-Plaintext
-social_automation/
-│
-├── app.py                # Dashboard principal (Streamlit)
-├── database.py           # Configuração do SQLite e modelos de dados
-├── requirements.txt      # Dependências do projeto
-├── sessions/             # Armazenamento seguro de cookies/sessões do Playwright
-├── modules/
-│   ├── __init__.py
-│   ├── youtube.py        # Integração YouTube
-│   ├── instagram.py      # Automação Instagram (Playwright)
-│   ├── tiktok.py         # Automação TikTok (Playwright)
-│   ├── pinterest.py      # Automação Pinterest
-│   ├── x_twitter.py      # Automação X
-│   └── linkedin.py       # Automação LinkedIn
-└── assets/               # Vídeos e mídias temporárias
-4. Fases de Execução para a IA Desenvolver
-Fase 1: Core e Banco de Dados (database.py e requirements.txt)
-Definir as dependências no requirements.txt: streamlit, playwright, google-auth-oauthlib, requests, apscheduler.
-
-Criar o banco SQLite com tabelas para:
-
-videos: Caminho do arquivo, título, descrição, tags, status (Pendente, Postado, Erro).
-
-logs: Histórico de execuções e erros por plataforma.
-
-accounts: Status de conexão de cada rede social.
-
-Fase 2: O Sistema de Login no Navegador (modules/ e Playwright)
-Criar um script base usando Playwright com persistent_context para que, ao clicar em "Conectar Conta" na dashboard, o navegador abra na página de login da rede social (ex: TikTok ou Instagram).
-
-Você faz o login manualmente uma única vez na janela que se abrir.
-
-O sistema salva os cookies e dados de sessão na pasta sessions/. Nas execuções seguintes, o robô reutiliza essa sessão logada sem precisar de senha novamente.
-
-Para o YouTube, implementar o fluxo padrão de arquivo client_secret.json via OAuth2.
-
-Fase 3: Módulos de Postagem por Plataforma
-Desenvolvimento individual dos scripts de envio para cada rede escolhida:
-
-YouTube: Upload automatizado via API oficial com tratamento de metadados.
-
-Instagram & TikTok: Robô em Playwright que navega até a página de criação/upload, preenche a legenda, carrega o arquivo de vídeo e clica em publicar.
-
-Pinterest, X e LinkedIn: Integrações via APIs dedicadas ou automação web de suporte.
-
-Fase 4: A Dashboard de Monitoramento (app.py)
-Construção da interface em Streamlit contendo:
-
-Página Inicial (Status Geral): Gráficos rápidos do volume de vídeos postados vs. falhas, e o status de conexão de cada uma das contas (Conectado / Desconectado).
-
-Painel de Logins: Botões interativos para disparar a janela de login assistido de cada plataforma caso alguma sessão expire.
-
-Fila de Publicação: Upload manual ou automático de um novo vídeo, seleção de quais redes vão receber o conteúdo, e botão de "Publicar Agora" ou "Agendar".
-
-Logs em Tempo Real: Uma aba mostrando o terminal visual das ações que os robôs estão tomando nos bastidores.
+Faça backup de `data/` e `sessions/` em local privado. Consulte [SECURITY.md](SECURITY.md) antes de expor o serviço fora do computador local.

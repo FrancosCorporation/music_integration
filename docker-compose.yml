@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build: .
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:?Configure DASHBOARD_PASSWORD no arquivo .env}"
+      DATA_DIR: /data
+      SESSION_DIR: /sessions
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./data:/data
+      - ./sessions:/sessions

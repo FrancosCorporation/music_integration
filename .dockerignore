@@ -1,0 +1,11 @@
+.git
+.planning
+.env
+.venv
+venv
+__pycache__
+*.py[cod]
+data
+sessions
+social_automation/data.db
+social_automation/assets

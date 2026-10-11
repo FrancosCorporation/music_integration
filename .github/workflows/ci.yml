@@ -1,0 +1,36 @@
+name: Static validation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse Python, JSON, and TOML files
+        run: |
+          python - <<'PY'
+          import ast
+          import json
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path(".")
+          for path in root.rglob("*.py"):
+              if any(part in {".git", ".venv", "venv", "__pycache__"} for part in path.parts):
+                  continue
+              ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+          for path in root.rglob("*.json"):
+              json.loads(path.read_text(encoding="utf-8"))
+          for path in root.rglob("*.toml"):
+              if ".git" not in path.parts:
+                  tomllib.loads(path.read_text(encoding="utf-8"))
+          PY

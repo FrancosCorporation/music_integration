@@ -9,3 +9,4 @@
 - As outras integrações estão desativadas. Não use automação de navegador para fornecer senhas a este painel.
 - Faça cópias de segurança criptografadas e limite o acesso a quem administra a conta.
 - Para remover os dados, pare o serviço e apague `data/` e `sessions/` conscientemente; essa ação remove uploads em espera e tokens locais.
+- `MEDIA_RETENTION_DAYS` é `0` por padrão. Se configurada com prazo positivo, a remoção continua exigindo confirmação manual e só apaga arquivos locais de vídeos cujos destinos estão todos publicados; itens pendentes/falhos/parciais, logs e vídeos remotos são preservados.

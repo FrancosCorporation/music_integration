@@ -25,6 +25,20 @@ SESSION_DIR = Path(os.environ.get("SESSION_DIR", Path(__file__).parents[1] / "se
 PLATFORMS = {"YouTube": "youtube"}
 
 
+def read_media_retention_days() -> int:
+    raw_value = os.environ.get("MEDIA_RETENTION_DAYS", "0").strip()
+    try:
+        retention_days = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("MEDIA_RETENTION_DAYS precisa ser um inteiro entre 0 e 36500.") from exc
+    if not 0 <= retention_days <= 36500:
+        raise ValueError("MEDIA_RETENTION_DAYS precisa estar entre 0 e 36500.")
+    return retention_days
+
+
+MEDIA_RETENTION_DAYS = read_media_retention_days()
+
+
 def require_dashboard_password() -> None:
     configured_password = os.environ.get("DASHBOARD_PASSWORD", "")
     if len(configured_password) < 16:
@@ -203,6 +217,30 @@ with tabs[1]:
     if st.button("Recolocar falhas na fila"):
         retried = db.retry_failed_targets()
         st.info(f"{retried} destino(s) aguardando nova tentativa.")
+
+    st.divider()
+    st.subheader("Limpeza de mídias publicadas")
+    if MEDIA_RETENTION_DAYS == 0:
+        st.info("Limpeza desativada. Defina MEDIA_RETENTION_DAYS no .env para habilitar a ação manual.")
+    else:
+        eligible_media_count = db.count_expired_posted_media(MEDIA_RETENTION_DAYS)
+        st.caption(
+            f"Remove do disco somente vídeos com todos os destinos publicados há pelo menos "
+            f"{MEDIA_RETENTION_DAYS} dia(s). {eligible_media_count} registro(s) elegível(is) agora. "
+            "Itens pendentes, em andamento, com falha ou parciais são preservados."
+        )
+        with st.form("cleanup_posted_media", clear_on_submit=True):
+            cleanup_confirmed = st.checkbox("Confirmo a remoção local dos arquivos elegíveis.")
+            cleanup_submitted = st.form_submit_button(
+                "Limpar mídias publicadas vencidas",
+                disabled=not cleanup_confirmed or eligible_media_count == 0,
+            )
+        if cleanup_submitted:
+            cleanup_result = db.cleanup_expired_posted_media(MEDIA_RETENTION_DAYS)
+            st.success(
+                f"Mídias removidas: {cleanup_result['deleted']} · "
+                f"Candidatas preservadas: {cleanup_result['skipped']}"
+            )
 
     rows = db.list_queue()
     if rows:

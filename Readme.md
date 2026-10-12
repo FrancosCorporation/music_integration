@@ -58,6 +58,7 @@ O painel fica disponível somente em `127.0.0.1:8501`. Os dados persistem em `da
 ## Armazenamento e configuração
 
 - `DASHBOARD_PASSWORD`: senha obrigatória do painel (mínimo de 16 caracteres).
+- `MEDIA_RETENTION_DAYS`: `0` desativa a limpeza local. Um valor entre 1 e 36500 dias habilita uma ação manual no painel; ela remove somente o arquivo local de vídeos com todos os destinos publicados após o prazo. Falhas, itens parciais ou pendentes e registros do banco permanecem; vídeos remotos não são removidos.
 - `DATA_DIR`: diretório de SQLite e vídeos recebidos; padrão `social_automation/data/`.
 - `SESSION_DIR`: diretório de credenciais; padrão `social_automation/sessions/`.
 - `DB_PATH`: opcional, caminho explícito para o SQLite.

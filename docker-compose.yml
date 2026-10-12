@@ -5,6 +5,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:?Configure DASHBOARD_PASSWORD no arquivo .env}"
+      MEDIA_RETENTION_DAYS: "${MEDIA_RETENTION_DAYS:-0}"
       DATA_DIR: /data
       SESSION_DIR: /sessions
     ports:

@@ -1,6 +1,7 @@
 """SQLite persistence for queued videos and per-platform publishing results."""
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import sqlite3
@@ -236,6 +237,80 @@ def retry_failed_targets() -> int:
             [(row["video_id"], row["platform"], "pending", "Falha recolocada na fila manualmente.") for row in rows],
         )
     return len(rows)
+
+
+def _expired_posted_media_candidates(retention_days: int) -> tuple[list[tuple[int, str]], Path]:
+    if type(retention_days) is not int or not 1 <= retention_days <= 36500:
+        raise ValueError("A retenção deve estar entre 1 e 36500 dias.")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    asset_root = (DATA_DIR / "assets").resolve()
+    with get_db() as connection:
+        candidates = connection.execute(
+            """SELECT v.id, v.file_path
+               FROM videos AS v
+               WHERE v.status = 'posted' AND v.posted_at IS NOT NULL AND v.posted_at <= ?
+                 AND EXISTS (
+                     SELECT 1 FROM video_targets AS t WHERE t.video_id = v.id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM video_targets AS t
+                     WHERE t.video_id = v.id AND t.status != 'posted'
+                 )
+               ORDER BY v.posted_at, v.id""",
+            (cutoff_text,),
+        ).fetchall()
+    return [(int(row["id"]), str(row["file_path"])) for row in candidates], asset_root
+
+
+def count_expired_posted_media(retention_days: int) -> int:
+    candidates, _ = _expired_posted_media_candidates(retention_days)
+    return len(candidates)
+
+
+def cleanup_expired_posted_media(retention_days: int) -> dict[str, int]:
+    candidates, asset_root = _expired_posted_media_candidates(retention_days)
+
+    result = {"deleted": 0, "skipped": 0}
+    for video_id, stored_path in candidates:
+        candidate = Path(stored_path).expanduser()
+        log_id = None
+        try:
+            if candidate.is_symlink():
+                result["skipped"] += 1
+                continue
+            file_path = candidate.resolve(strict=True)
+            if not file_path.is_relative_to(asset_root) or not file_path.is_file():
+                result["skipped"] += 1
+                continue
+
+            with get_db() as connection:
+                cursor = connection.execute(
+                    """INSERT INTO logs (video_id, platform, status, message)
+                       VALUES (?, 'local-media', 'media_cleanup_started',
+                               'Limpeza manual de mídia publicada iniciada.')""",
+                    (video_id,),
+                )
+                log_id = int(cursor.lastrowid)
+            file_path.unlink()
+        except (OSError, RuntimeError):
+            if log_id is not None:
+                with get_db() as connection:
+                    connection.execute(
+                        "UPDATE logs SET status = 'media_cleanup_failed', message = ? WHERE id = ?",
+                        ("Falha ao remover a mídia publicada.", log_id),
+                    )
+            result["skipped"] += 1
+            continue
+
+        with get_db() as connection:
+            connection.execute(
+                "UPDATE logs SET status = 'media_deleted', message = ? WHERE id = ?",
+                ("Mídia local removida após o prazo de retenção.", log_id),
+            )
+        result["deleted"] += 1
+    return result
 
 
 def get_stats() -> dict[str, int]:

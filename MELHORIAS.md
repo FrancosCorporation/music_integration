@@ -32,3 +32,6 @@ considera `videos.status='posted'`, data vencida e todos os destinos em `posted`
 preserva caminhos fora de `data/assets`, symlinks, arquivos ausentes, itens
 parciais/falhos/pendentes e registra o resultado no banco. Não apaga uploads do
 YouTube. A CI estática agora fixa Ubuntu 24.04 e usa checkout/setup-python v7.
+Commit `3334535` passou na CI `38195921225`. AST de 12 Python, parse de 2 JSON,
+YAML/TOML, Compose config e `git diff --check` passaram; nenhum teste, OAuth,
+publicação ou ação de limpeza foi executado.
